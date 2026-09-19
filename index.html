@@ -1,0 +1,1487 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RED ZONE Studio - Dual MIDI Video Processor (Polyphonic & Export)</title>
+  <!-- MIDI パーサーライブラリ -->
+  <script src="https://cdn.jsdelivr.net/npm/@tonejs/midi"></script>
+  <style>
+    :root {
+      --bg-main: #f8f9fa;
+      --surface: #ffffff;
+      --border: #e5e7eb;
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --primary-active: #dbeafe;
+      --primary-tint: #eff6ff;
+      --text-main: #1f2937;
+      --text-muted: #6b7280;
+      --viewer-bg: #0f1117;
+      --accent-m1: #0284c7;
+      --accent-m2: #e11d48;
+      --danger: #ef4444;
+      --success: #10b981;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "BIZ UDPGothic", "Hiragino映像 ProN", sans-serif;
+      color: var(--text-main);
+      background-color: var(--bg-main);
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* トップバー */
+    .topbar {
+      height: 52px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+      flex-shrink: 0;
+      z-index: 20;
+    }
+    .topbar-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .brand-title {
+      font-size: 1.05rem;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .badge-sub {
+      font-size: 0.72rem;
+      font-weight: 600;
+      padding: 2px 6px;
+      background: #f3f4f6;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text-muted);
+    }
+    .topbar-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .hud-chip {
+      font-size: 0.75rem;
+      font-family: ui-monospace, monospace;
+      padding: 4px 8px;
+      border-radius: 4px;
+      background: #f3f4f6;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+    .hud-chip.m1 { color: var(--accent-m1); font-weight: 600; }
+    .hud-chip.m2 { color: var(--accent-m2); font-weight: 600; }
+    .hud-chip.rec { color: var(--danger); font-weight: 700; background: #fee2e2; border-color: #fca5a5; display: none; }
+
+    /* メインワークスペース */
+    .workspace {
+      flex: 1;
+      display: flex;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    /* 左ペイン：ビューア & タイムライン */
+    .viewer-area {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      padding: 16px;
+      gap: 12px;
+      min-width: 0;
+      min-height: 0;
+      overflow-y: auto;
+      background: var(--bg-main);
+    }
+
+    /* 16:9 ビデオステージコンテナ */
+    .stage-outer {
+      width: 100%;
+      max-width: 960px;
+      margin: 0 auto;
+      aspect-ratio: 16 / 9;
+      background: var(--viewer-bg);
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1px solid #1f2430;
+      position: relative;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+    }
+    .stage-inner {
+      width: 100%;
+      height: 100%;
+      position: relative;
+      display: flex;
+    }
+
+    /* レイアウト定義 */
+    .stage-inner.layout-split-h { display: flex; flex-direction: row; }
+    .stage-inner.layout-split-h .screen-panel { width: 50%; height: 100%; }
+    .stage-inner.layout-split-h #panelLeft { border-right: 1px solid rgba(255,255,255,0.15); }
+
+    .stage-inner.layout-split-v { display: flex; flex-direction: column; }
+    .stage-inner.layout-split-v .screen-panel { width: 100%; height: 50%; }
+    .stage-inner.layout-split-v #panelLeft { border-bottom: 1px solid rgba(255,255,255,0.15); }
+
+    .stage-inner.layout-pip #panelLeft { width: 100%; height: 100%; }
+    .stage-inner.layout-pip #panelRight {
+      position: absolute;
+      right: 16px;
+      bottom: 16px;
+      width: 32%;
+      aspect-ratio: 16 / 9;
+      height: auto;
+      border-radius: 6px;
+      border: 2px solid rgba(255,255,255,0.8);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+      z-index: 10;
+    }
+
+    .stage-inner.layout-grid-2x2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: 1fr 1fr;
+    }
+    .stage-inner.layout-grid-2x2 .screen-panel { width: 100%; height: 100%; }
+
+    .stage-inner.layout-switch .screen-panel {
+      position: absolute;
+      top: 0; left: 0; width: 100%; height: 100%;
+      transition: opacity 0.05s ease;
+    }
+    .stage-inner.layout-switch .screen-panel.inactive { opacity: 0; pointer-events: none; }
+    .stage-inner.layout-switch .screen-panel.active { opacity: 1; z-index: 5; }
+
+    .screen-panel {
+      position: relative;
+      overflow: hidden;
+      background: #000;
+    }
+    .crop-wrapper {
+      width: 100%;
+      height: 100%;
+      position: relative;
+      overflow: hidden;
+    }
+    .target-video {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      pointer-events: none;
+      will-change: transform;
+    }
+    .panel-hud {
+      position: absolute;
+      top: 8px; left: 8px;
+      background: rgba(0,0,0,0.65);
+      backdrop-filter: blur(4px);
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 0.7rem;
+      font-weight: 600;
+      z-index: 10;
+      pointer-events: none;
+      color: #fff;
+    }
+    .panel-hud.m1 { border-left: 3px solid var(--accent-m1); }
+    .panel-hud.m2 { border-left: 3px solid var(--accent-m2); }
+
+    /* ピアノロールカード */
+    .pianoroll-card {
+      width: 100%;
+      max-width: 960px;
+      margin: 0 auto;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+    .pianoroll-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+    .seek-slider {
+      width: 100%;
+      cursor: pointer;
+    }
+    canvas#pianoRollCanvas {
+      width: 100%;
+      height: 180px;
+      background: #090b10;
+      border-radius: 6px;
+      display: block;
+      cursor: crosshair;
+    }
+
+    /* 右ペイン：設定サイドバー */
+    .control-panel {
+      width: 390px;
+      background: var(--surface);
+      border-left: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      min-height: 0;
+      overflow-y: auto;
+    }
+    .panel-inner {
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .control-card {
+      background: #fafafa;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .control-card.highlight {
+      background: var(--primary-tint);
+      border-color: #bfdbfe;
+    }
+    .control-card.export-card {
+      background: #ecfdf5;
+      border-color: #a7f3d0;
+    }
+    .card-title {
+      font-size: 0.82rem;
+      font-weight: 700;
+      color: var(--text-main);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .card-title.m1 { color: var(--accent-m1); }
+    .card-title.m2 { color: var(--accent-m2); }
+
+    label {
+      display: block;
+      font-size: 0.74rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: 3px;
+    }
+    .val-display {
+      font-weight: 700;
+      color: var(--primary);
+    }
+    input[type="range"], select, input[type="file"] {
+      width: 100%;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: #fff;
+      font-size: 0.8rem;
+      color: var(--text-main);
+      padding: 6px;
+    }
+    input[type="range"] { padding: 0; }
+    .row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .row > * { flex: 1; }
+
+    .btn {
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: #fff;
+      color: var(--text-main);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: background 0.15s;
+    }
+    .btn:hover { background: #f3f4f6; }
+    .btn-primary {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: #fff;
+    }
+    .btn-primary:hover { background: var(--primary-hover); }
+    .btn-sample {
+      background: #fdf2f8;
+      border-color: #fbcfe8;
+      color: #be185d;
+    }
+    .btn-sample:hover { background: #fce7f3; }
+    .btn-export {
+      background: var(--success);
+      border-color: var(--success);
+      color: #fff;
+      width: 100%;
+      padding: 8px;
+    }
+    .btn-export:hover { background: #059669; }
+    .btn-export.recording {
+      background: var(--danger);
+      border-color: var(--danger);
+      animation: pulse 1s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.7; }
+    }
+    .btn-danger {
+      background: #fef2f2;
+      border-color: #fecaca;
+      color: var(--danger);
+    }
+    .btn-danger.active {
+      background: var(--danger);
+      border-color: var(--danger);
+      color: #fff;
+    }
+
+    #exportCanvas { display: none; }
+  </style>
+</head>
+<body>
+
+  <!-- トップバー -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <div class="brand-title">
+        <span>RED ZONE Studio</span>
+        <span class="badge-sub">Polyphonic Sync & FX</span>
+      </div>
+      <button class="btn btn-primary" id="btnPlay">▶ 再生</button>
+      <button class="btn btn-sample" id="btnSampleGen">🎮 テストサンプル生成</button>
+    </div>
+    <div class="topbar-right">
+      <div class="hud-chip rec" id="hudRec">● REC 録画中</div>
+      <div class="hud-chip m1" id="hudMidi1">M1: 待機中</div>
+      <div class="hud-chip m2" id="hudMidi2">M2: 待機中</div>
+      <div class="hud-chip" id="hudStatus">停止</div>
+    </div>
+  </header>
+
+  <!-- ワークスペース -->
+  <main class="workspace">
+    <section class="viewer-area">
+      <div class="stage-outer">
+        <div class="stage-inner layout-split-h" id="stageInner">
+          <div class="screen-panel" id="panelLeft">
+            <div class="panel-hud m1" id="badgeLeft">MIDI 1 [L]</div>
+            <div class="crop-wrapper">
+              <video id="videoLeft" class="target-video" playsinline></video>
+            </div>
+          </div>
+          <div class="screen-panel" id="panelRight">
+            <div class="panel-hud m2" id="badgeRight">MIDI 2 [R]</div>
+            <div class="crop-wrapper">
+              <video id="videoRight" class="target-video" playsinline></video>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="pianoroll-card">
+        <div class="pianoroll-header">
+          <span>MIDI タイムライン (白枠: 偶数回反転 / 重音・同時再生対応)</span>
+          <span id="timelineTime" style="font-family: monospace; font-weight: 700;">0.00s / 0.00s</span>
+        </div>
+        <input type="range" id="seekSlider" class="seek-slider" min="0" max="10" step="0.01" value="0">
+        <canvas id="pianoRollCanvas" width="960" height="180"></canvas>
+      </div>
+    </section>
+
+    <!-- 右ペイン：設定サイドバー -->
+    <aside class="control-panel">
+      <div class="panel-inner">
+
+        <!-- 0. 動画エクスポート -->
+        <div class="control-card export-card">
+          <div class="card-title" style="color: #065f46;">
+            <span>動画エクスポート (録画出力)</span>
+            <span style="font-size: 0.7rem; font-weight: 600; color: #047857;">WebM / MP4</span>
+          </div>
+          <p style="font-size: 0.74rem; color: #065f46; line-height: 1.4;">
+            同時再生された和音・エフェクト付き音声と映像を完全に合成し、動画ファイルとしてダウンロード保存します。
+          </p>
+          <button class="btn btn-export" id="btnRecordExport">⏺ 録画を開始して動画を出力</button>
+        </div>
+
+        <!-- 1. ファイル読み込み -->
+        <div class="control-card highlight">
+          <div class="card-title">1. ファイル読み込み (MIDI & 動画)</div>
+          <div>
+            <label style="color: var(--accent-m1);">MIDI 1 (左画面) <span id="m1Status" class="val-display">未選択</span></label>
+            <input type="file" id="inputMidi1" accept=".mid,.midi">
+          </div>
+          <div>
+            <label style="color: var(--accent-m2);">MIDI 2 (右画面) <span id="m2Status" class="val-display">未選択</span></label>
+            <input type="file" id="inputMidi2" accept=".mid,.midi">
+          </div>
+          <div>
+            <label>動画素材 1 (MP4/WebM) <span id="v1Status" class="val-display">未選択</span></label>
+            <input type="file" id="inputVideo1" accept="video/*">
+          </div>
+          <div>
+            <label>動画素材 2 (未選択時は動画1を使用)</label>
+            <input type="file" id="inputVideo2" accept="video/*">
+          </div>
+        </div>
+
+        <!-- 2. レイアウト & テンポ -->
+        <div class="control-card">
+          <div class="card-title">2. レイアウト & BPM</div>
+          <div>
+            <label>画面分割テンプレート</label>
+            <select id="selectLayout">
+              <option value="split-h">左右分割 (50:50) - 王道 RED ZONE</option>
+              <option value="split-v">上下分割 (50:50)</option>
+              <option value="pip">子画面 (PiP: 動画1全画面 + 右下動画2)</option>
+              <option value="grid-2x2">4分割 (2x2 グリッド)</option>
+              <option value="switch">全画面交互切り替え (直近打鍵優先)</option>
+            </select>
+          </div>
+          <div>
+            <label>BPM: <span id="bpmVal" class="val-display">150</span></label>
+            <input type="range" id="rangeBpm" min="60" max="260" value="150">
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px; margin-top: 4px;">
+            <input type="checkbox" id="checkGate" checked style="width: auto;">
+            <label for="checkGate" style="margin-bottom: 0; cursor: pointer;">キー押下中のみ再生 (Note Gate)</label>
+          </div>
+        </div>
+
+        <!-- 3. ピッチ微細チューニング (MIDI 1) -->
+        <div class="control-card">
+          <div class="card-title m1">
+            <span>MIDI 1 音程チューニング</span>
+            <button class="btn btn-danger" id="m1MuteBtn" style="padding: 2px 8px; font-size: 0.72rem;">MUTE</button>
+          </div>
+          <div class="row">
+            <div>
+              <label>基準音 (Key)</label>
+              <select id="baseNoteSelect1"></select>
+            </div>
+            <div>
+              <label>オクターブ</label>
+              <select id="m1OctSelect">
+                <option value="-3">-3 Oct</option>
+                <option value="-2">-2 Oct</option>
+                <option value="-1">-1 Oct</option>
+                <option value="0" selected>±0 Oct</option>
+                <option value="1">+1 Oct</option>
+                <option value="2">+2 Oct</option>
+                <option value="3">+3 Oct</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label>半音移調: <span id="m1SemiVal" class="val-display">0 st</span></label>
+            <input type="range" id="m1SemiSlider" min="-24" max="24" value="0">
+          </div>
+          <div>
+            <label>セント微調整: <span id="m1FineVal" class="val-display">0 cents</span></label>
+            <input type="range" id="m1FineSlider" min="-100" max="100" value="0">
+          </div>
+        </div>
+
+        <!-- 4. ピッチ微細チューニング (MIDI 2) -->
+        <div class="control-card">
+          <div class="card-title m2">
+            <span>MIDI 2 音程チューニング</span>
+            <button class="btn btn-danger" id="m2MuteBtn" style="padding: 2px 8px; font-size: 0.72rem;">MUTE</button>
+          </div>
+          <div class="row">
+            <div>
+              <label>基準音 (Key)</label>
+              <select id="baseNoteSelect2"></select>
+            </div>
+            <div>
+              <label>オクターブ</label>
+              <select id="m2OctSelect">
+                <option value="-3">-3 Oct</option>
+                <option value="-2">-2 Oct</option>
+                <option value="-1">-1 Oct</option>
+                <option value="0" selected>±0 Oct</option>
+                <option value="1">+1 Oct</option>
+                <option value="2">+2 Oct</option>
+                <option value="3">+3 Oct</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label>半音移調: <span id="m2SemiVal" class="val-display">0 st</span></label>
+            <input type="range" id="m2SemiSlider" min="-24" max="24" value="0">
+          </div>
+          <div>
+            <label>セント微調整: <span id="m2FineVal" class="val-display">0 cents</span></label>
+            <input type="range" id="m2FineSlider" min="-100" max="100" value="0">
+          </div>
+        </div>
+
+        <!-- 5. 動画頭出し再生トリミング -->
+        <div class="control-card">
+          <div class="card-title">5. 動画素材 頭出し位置</div>
+          <div class="row">
+            <div>
+              <label>動画1 開始秒数: <span id="v1StartVal" class="val-display">0.00s</span></label>
+              <input type="range" id="rangeV1Start" min="0" max="10" step="0.01" value="0">
+            </div>
+            <div>
+              <label>動画2 開始秒数: <span id="v2StartVal" class="val-display">0.00s</span></label>
+              <input type="range" id="rangeV2Start" min="0" max="10" step="0.01" value="0">
+            </div>
+          </div>
+        </div>
+
+        <!-- 6. 画面クロップ -->
+        <div class="control-card">
+          <div class="card-title">6. 画面クロップ</div>
+          <div class="row">
+            <div>
+              <label>ズーム: <span id="cropZoomVal" class="val-display">1.0x</span></label>
+              <input type="range" id="cropZoom" min="1" max="3" step="0.05" value="1">
+            </div>
+            <div>
+              <label>X シフト: <span id="cropXVal" class="val-display">0%</span></label>
+              <input type="range" id="cropX" min="-100" max="100" value="0">
+            </div>
+          </div>
+        </div>
+
+        <!-- 7. 音声エフェクトラック -->
+        <div class="control-card">
+          <div class="card-title">7. 音声エフェクトラック (Audio FX)</div>
+          <div>
+            <label>⚡ ディストーション: <span id="distVal" class="val-display">0%</span></label>
+            <input type="range" id="rangeDist" min="0" max="100" value="0">
+          </div>
+          <div class="row">
+            <div>
+              <label>EQ Low</label>
+              <input type="range" id="rangeEqLow" min="-12" max="12" value="0">
+            </div>
+            <div>
+              <label>EQ High</label>
+              <input type="range" id="rangeEqHigh" min="-12" max="12" value="0">
+            </div>
+          </div>
+          <div>
+            <label>🌊 ディレイ Mix: <span id="delayVal" class="val-display">0%</span></label>
+            <input type="range" id="rangeDelay" min="0" max="80" value="0">
+          </div>
+          <div>
+            <label>マスター音量: <span id="volVal" class="val-display">80%</span></label>
+            <input type="range" id="rangeVol" min="0" max="1" step="0.05" value="0.8">
+          </div>
+        </div>
+
+      </div>
+    </aside>
+  </main>
+
+  <canvas id="exportCanvas" width="1920" height="1080"></canvas>
+
+  <script>
+    const NOTE_NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+    function midiToNoteName(num) {
+      const oct = Math.floor(num / 12) - 1;
+      return `${NOTE_NAMES[num % 12]}${oct} (${num})`;
+    }
+
+    const state = {
+      bpm: 150,
+      isPlaying: false,
+      playbackTime: 0,
+      totalDuration: 10,
+      startTime: 0,
+      isGate: true,
+      layout: 'split-h',
+      crop: { zoom: 1, x: 0 },
+      v1Start: 0,
+      v2Start: 0,
+      isRecording: false,
+      mediaRecorder: null,
+      recordedChunks: [],
+      track1: {
+        notes: [],
+        lastProcessedIdx: -1,
+        hitCount: 0,
+        flipped: false,
+        basePitch: 60,
+        octaveShift: 0,
+        semiShift: 0,
+        fineShift: 0,
+        isMuted: false,
+        activeVoices: new Map(), // ★ポリフォニック対応: 個別ノート管理
+        buffer: null
+      },
+      track2: {
+        notes: [],
+        lastProcessedIdx: -1,
+        hitCount: 0,
+        flipped: false,
+        basePitch: 60,
+        octaveShift: 0,
+        semiShift: 0,
+        fineShift: 0,
+        isMuted: false,
+        activeVoices: new Map(), // ★ポリフォニック対応: 個別ノート管理
+        buffer: null
+      },
+      pitchMin: 36,
+      pitchMax: 84,
+      audioCtx: null,
+      masterGain: null,
+      distortionNode: null,
+      eqLowNode: null,
+      eqHighNode: null,
+      delayNode: null,
+      delayGainNode: null,
+      limiterNode: null,
+      exportStreamDest: null
+    };
+
+    const videoLeft = document.getElementById('videoLeft');
+    const videoRight = document.getElementById('videoRight');
+    const stageInner = document.getElementById('stageInner');
+    const panelLeft = document.getElementById('panelLeft');
+    const panelRight = document.getElementById('panelRight');
+    const btnPlay = document.getElementById('btnPlay');
+    const seekSlider = document.getElementById('seekSlider');
+    const canvas = document.getElementById('pianoRollCanvas');
+    const ctx = canvas.getContext('2d');
+    const exportCanvas = document.getElementById('exportCanvas');
+    const expCtx = exportCanvas.getContext('2d');
+    const btnRecordExport = document.getElementById('btnRecordExport');
+    const hudRec = document.getElementById('hudRec');
+
+    function makeDistortionCurve(amount = 0) {
+      const k = typeof amount === 'number' ? amount : 0;
+      const n_samples = 44100;
+      const curve = new Float32Array(n_samples);
+      const deg = Math.PI / 180;
+      if (k === 0) {
+        for (let i = 0; i < n_samples; ++i) curve[i] = (i * 2) / n_samples - 1;
+        return curve;
+      }
+      for (let i = 0; i < n_samples; ++i) {
+        const x = (i * 2) / n_samples - 1;
+        curve[i] = ((3 + k) * x * 20 * deg) / (Math.PI + k * Math.abs(x));
+      }
+      return curve;
+    }
+
+    function initAudioEngine() {
+      if (state.audioCtx) return;
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      state.audioCtx = new AudioContextClass();
+
+      state.distortionNode = state.audioCtx.createWaveShaper();
+      state.distortionNode.curve = makeDistortionCurve(0);
+      state.distortionNode.oversample = '2x';
+
+      state.eqLowNode = state.audioCtx.createBiquadFilter();
+      state.eqLowNode.type = 'lowshelf';
+      state.eqLowNode.frequency.value = 250;
+
+      state.eqHighNode = state.audioCtx.createBiquadFilter();
+      state.eqHighNode.type = 'highshelf';
+      state.eqHighNode.frequency.value = 4000;
+
+      state.delayNode = state.audioCtx.createDelay();
+      state.delayNode.delayTime.value = 0.25;
+      state.delayGainNode = state.audioCtx.createGain();
+      state.delayGainNode.gain.value = 0;
+
+      state.limiterNode = state.audioCtx.createDynamicsCompressor();
+      state.limiterNode.threshold.value = -1.0;
+      state.limiterNode.ratio.value = 16.0;
+
+      state.masterGain = state.audioCtx.createGain();
+      state.masterGain.gain.value = 0.8;
+
+      state.exportStreamDest = state.audioCtx.createMediaStreamDestination();
+
+      state.distortionNode.connect(state.eqLowNode);
+      state.eqLowNode.connect(state.eqHighNode);
+      state.eqHighNode.connect(state.limiterNode);
+
+      state.eqHighNode.connect(state.delayNode);
+      state.delayNode.connect(state.delayGainNode);
+      state.delayGainNode.connect(state.limiterNode);
+
+      state.limiterNode.connect(state.masterGain);
+      state.masterGain.connect(state.audioCtx.destination);
+      state.masterGain.connect(state.exportStreamDest);
+    }
+
+    // ★ポリフォニック発音（重なっている音を消さずに同時再生）
+    function playSamplerVoice(trackNum, note) {
+      if (!state.audioCtx) initAudioEngine();
+      if (state.audioCtx.state === 'suspended') state.audioCtx.resume();
+
+      const track = trackNum === 1 ? state.track1 : state.track2;
+      if (track.isMuted || !track.buffer) return;
+
+      const startOffset = trackNum === 1 ? state.v1Start : state.v2Start;
+
+      const source = state.audioCtx.createBufferSource();
+      source.buffer = track.buffer;
+
+      const totalSemitones = (note.midi - track.basePitch) + (track.octaveShift * 12) + track.semiShift + (track.fineShift / 100);
+      source.playbackRate.value = Math.max(0.1, Math.min(8.0, Math.pow(2, totalSemitones / 12)));
+
+      const voiceGain = state.audioCtx.createGain();
+      voiceGain.gain.setValueAtTime(0.85, state.audioCtx.currentTime);
+
+      source.connect(voiceGain);
+      voiceGain.connect(state.distortionNode);
+
+      const safeOffset = Math.min(startOffset, Math.max(0, track.buffer.duration - 0.05));
+      source.start(0, safeOffset);
+
+      // アクティブボイスとして登録
+      track.activeVoices.set(note, { source, gain: voiceGain });
+    }
+
+    // 個別ノートの消音
+    function stopSingleSamplerVoice(trackNum, note) {
+      const track = trackNum === 1 ? state.track1 : state.track2;
+      const voice = track.activeVoices.get(note);
+      if (voice && state.audioCtx) {
+        try {
+          voice.gain.gain.linearRampToValueAtTime(0, state.audioCtx.currentTime + 0.025);
+          voice.source.stop(state.audioCtx.currentTime + 0.03);
+        } catch(e) {}
+        track.activeVoices.delete(note);
+      }
+    }
+
+    // トラック全体の全音消音（一時停止やMUTE時用）
+    function stopAllSamplerVoices(trackNum) {
+      const track = trackNum === 1 ? state.track1 : state.track2;
+      if (!state.audioCtx) return;
+      track.activeVoices.forEach((voice) => {
+        try {
+          voice.gain.gain.linearRampToValueAtTime(0, state.audioCtx.currentTime + 0.015);
+          voice.source.stop(state.audioCtx.currentTime + 0.02);
+        } catch(e) {}
+      });
+      track.activeVoices.clear();
+    }
+
+    function updateCrop() {
+      [videoLeft, videoRight].forEach((v, idx) => {
+        v.style.transformOrigin = 'center center';
+        const isFlipped = idx === 0 ? state.track1.flipped : state.track2.flipped;
+        const sx = (isFlipped ? -1 : 1) * state.crop.zoom;
+        v.style.transform = `scale(${sx}, ${state.crop.zoom}) translate(${state.crop.x}%, 0)`;
+      });
+    }
+
+    function setLayout(mode) {
+      state.layout = mode;
+      stageInner.className = `stage-inner layout-${mode}`;
+      if (mode === 'switch') {
+        panelLeft.className = 'screen-panel active';
+        panelRight.className = 'screen-panel inactive';
+      } else {
+        panelLeft.className = 'screen-panel';
+        panelRight.className = 'screen-panel';
+      }
+      updateCrop();
+    }
+
+    function triggerHit(trackNum, note) {
+      const isM1 = trackNum === 1;
+      const track = isM1 ? state.track1 : state.track2;
+      const video = isM1 ? videoLeft : videoRight;
+      const hud = document.getElementById(isM1 ? 'hudMidi1' : 'hudMidi2');
+      const startOffset = isM1 ? state.v1Start : state.v2Start;
+
+      track.hitCount = note.hitIndex;
+      track.flipped = (track.hitCount % 2 === 0);
+
+      try {
+        video.currentTime = startOffset;
+      } catch (e) {}
+      video.play().catch(() => {});
+
+      // 同時発音サンプラー
+      playSamplerVoice(trackNum, note);
+
+      if (state.layout === 'switch') {
+        if (isM1) {
+          panelLeft.className = 'screen-panel active';
+          panelRight.className = 'screen-panel inactive';
+        } else {
+          panelLeft.className = 'screen-panel inactive';
+          panelRight.className = 'screen-panel active';
+        }
+      }
+
+      updateCrop();
+      if (hud) {
+        hud.textContent = `M${trackNum}: #${note.hitIndex} [${midiToNoteName(note.midi)}] ${track.flipped ? '反転' : '通常'}`;
+      }
+    }
+
+    function triggerNoteOff(trackNum, note) {
+      stopSingleSamplerVoice(trackNum, note);
+
+      // トラック内の全ノートが終了したときのみ映像をポーズ
+      const track = trackNum === 1 ? state.track1 : state.track2;
+      if (state.isGate && track.activeVoices.size === 0) {
+        const video = trackNum === 1 ? videoLeft : videoRight;
+        video.pause();
+      }
+    }
+
+    function renderCompositeFrameToExportCanvas() {
+      const W = exportCanvas.width;
+      const H = exportCanvas.height;
+      expCtx.fillStyle = '#000000';
+      expCtx.fillRect(0, 0, W, H);
+
+      function drawVideoToRect(video, isFlipped, x, y, w, h) {
+        if (!video.videoWidth) return;
+        expCtx.save();
+        expCtx.beginPath();
+        expCtx.rect(x, y, w, h);
+        expCtx.clip();
+
+        expCtx.translate(x + w / 2, y + h / 2);
+        expCtx.scale((isFlipped ? -1 : 1) * state.crop.zoom, state.crop.zoom);
+        expCtx.translate((state.crop.x / 100) * w, 0);
+
+        const vRatio = video.videoWidth / video.videoHeight;
+        const boxRatio = w / h;
+        let dw = w, dh = h;
+        if (vRatio > boxRatio) dw = h * vRatio;
+        else dh = w / vRatio;
+
+        expCtx.drawImage(video, -dw / 2, -dh / 2, dw, dh);
+        expCtx.restore();
+      }
+
+      const m = state.layout;
+      if (m === 'split-h') {
+        drawVideoToRect(videoLeft, state.track1.flipped, 0, 0, W / 2, H);
+        drawVideoToRect(videoRight, state.track2.flipped, W / 2, 0, W / 2, H);
+      } else if (m === 'split-v') {
+        drawVideoToRect(videoLeft, state.track1.flipped, 0, 0, W, H / 2);
+        drawVideoToRect(videoRight, state.track2.flipped, 0, H / 2, W, H / 2);
+      } else if (m === 'pip') {
+        drawVideoToRect(videoLeft, state.track1.flipped, 0, 0, W, H);
+        const pipW = W * 0.32;
+        const pipH = pipW * (9 / 16);
+        drawVideoToRect(videoRight, state.track2.flipped, W - pipW - 30, H - pipH - 30, pipW, pipH);
+        expCtx.strokeStyle = '#ffffff';
+        expCtx.lineWidth = 4;
+        expCtx.strokeRect(W - pipW - 30, H - pipH - 30, pipW, pipH);
+      } else if (m === 'grid-2x2') {
+        drawVideoToRect(videoLeft, state.track1.flipped, 0, 0, W / 2, H / 2);
+        drawVideoToRect(videoRight, state.track2.flipped, W / 2, 0, W / 2, H / 2);
+        drawVideoToRect(videoRight, state.track2.flipped, 0, H / 2, W / 2, H / 2);
+        drawVideoToRect(videoLeft, state.track1.flipped, W / 2, H / 2, W / 2, H / 2);
+      } else if (m === 'switch') {
+        const isM1Active = panelLeft.classList.contains('active');
+        if (isM1Active) drawVideoToRect(videoLeft, state.track1.flipped, 0, 0, W, H);
+        else drawVideoToRect(videoRight, state.track2.flipped, 0, 0, W, H);
+      }
+    }
+
+    let animId = null;
+
+    // ★重なった全ノートの開始・終了を走査
+    function mainLoop() {
+      if (!state.isPlaying) return;
+
+      const now = performance.now();
+      const tempoScale = state.bpm / 120;
+      state.playbackTime = ((now - state.startTime) / 1000) * tempoScale;
+
+      if (state.isRecording) {
+        renderCompositeFrameToExportCanvas();
+      }
+
+      if (state.playbackTime > state.totalDuration) {
+        if (state.isRecording) stopRecordingAndDownload();
+        stopPlayback();
+        return;
+      }
+
+      // MIDI 1 判定
+      for (let i = state.track1.lastProcessedIdx + 1; i < state.track1.notes.length; i++) {
+        const n = state.track1.notes[i];
+        if (n.time <= state.playbackTime) {
+          state.track1.lastProcessedIdx = i;
+          triggerHit(1, n);
+        } else break;
+      }
+      // MIDI 1 ノートオフ判定 (現在鳴っているボイスの終了監視)
+      if (state.isGate) {
+        state.track1.activeVoices.forEach((voice, n) => {
+          if (state.playbackTime >= n.time + n.duration) {
+            triggerNoteOff(1, n);
+          }
+        });
+      }
+
+      // MIDI 2 判定
+      for (let i = state.track2.lastProcessedIdx + 1; i < state.track2.notes.length; i++) {
+        const n = state.track2.notes[i];
+        if (n.time <= state.playbackTime) {
+          state.track2.lastProcessedIdx = i;
+          triggerHit(2, n);
+        } else break;
+      }
+      // MIDI 2 ノートオフ判定
+      if (state.isGate) {
+        state.track2.activeVoices.forEach((voice, n) => {
+          if (state.playbackTime >= n.time + n.duration) {
+            triggerNoteOff(2, n);
+          }
+        });
+      }
+
+      drawPianoRoll();
+      seekSlider.value = state.playbackTime;
+      document.getElementById('timelineTime').textContent = 
+        `${state.playbackTime.toFixed(2)}s / ${state.totalDuration.toFixed(2)}s`;
+
+      animId = requestAnimationFrame(mainLoop);
+    }
+
+    function drawPianoRoll() {
+      const w = canvas.width;
+      const h = canvas.height;
+      ctx.clearRect(0, 0, w, h);
+
+      const pMin = state.pitchMin;
+      const pMax = state.pitchMax;
+      const pRange = Math.max(12, pMax - pMin);
+
+      for (let p = pMin; p <= pMax; p++) {
+        const y = h - ((p - pMin) / pRange) * h;
+        if (p % 12 === 0) {
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+          ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+          ctx.fillStyle = '#64748b';
+          ctx.font = '10px monospace';
+          ctx.fillText(midiToNoteName(p).split(' ')[0], 4, y - 2);
+        }
+      }
+
+      const timeWindow = 4.0;
+      const timeOffset = state.playbackTime - 0.5;
+
+      function renderNotes(notes, color) {
+        notes.forEach(n => {
+          if (n.time + n.duration < timeOffset || n.time > timeOffset + timeWindow) return;
+          const x = ((n.time - timeOffset) / timeWindow) * w;
+          const nw = Math.max(4, (n.duration / timeWindow) * w);
+          const nh = Math.max(4, h / pRange);
+          const y = h - ((n.midi - pMin) / pRange) * h;
+
+          ctx.fillStyle = color;
+          ctx.fillRect(x, y - nh, nw, nh);
+
+          if (n.shouldFlip) {
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 1.5;
+            ctx.strokeRect(x, y - nh, nw, nh);
+          }
+        });
+      }
+
+      renderNotes(state.track1.notes, 'rgba(2, 132, 199, 0.85)');
+      renderNotes(state.track2.notes, 'rgba(225, 29, 72, 0.85)');
+
+      const curX = (0.5 / timeWindow) * w;
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(curX, 0); ctx.lineTo(curX, h); ctx.stroke();
+    }
+
+    function seekTo(sec) {
+      state.playbackTime = Math.max(0, Math.min(sec, state.totalDuration));
+      const tempoScale = state.bpm / 120;
+      state.startTime = performance.now() - (state.playbackTime / tempoScale) * 1000;
+
+      // 既存ボイスを即座にリセット
+      stopAllSamplerVoices(1);
+      stopAllSamplerVoices(2);
+
+      let last1 = -1;
+      for (let i = 0; i < state.track1.notes.length; i++) {
+        if (state.track1.notes[i].time <= state.playbackTime) last1 = i; else break;
+      }
+      state.track1.lastProcessedIdx = last1;
+      state.track1.hitCount = last1 >= 0 ? state.track1.notes[last1].hitIndex : 0;
+      state.track1.flipped = last1 >= 0 ? (state.track1.hitCount % 2 === 0) : false;
+
+      let last2 = -1;
+      for (let i = 0; i < state.track2.notes.length; i++) {
+        if (state.track2.notes[i].time <= state.playbackTime) last2 = i; else break;
+      }
+      state.track2.lastProcessedIdx = last2;
+      state.track2.hitCount = last2 >= 0 ? state.track2.notes[last2].hitIndex : 0;
+      state.track2.flipped = last2 >= 0 ? (state.track2.hitCount % 2 === 0) : false;
+
+      updateCrop();
+      drawPianoRoll();
+      seekSlider.value = state.playbackTime;
+      document.getElementById('timelineTime').textContent = 
+        `${state.playbackTime.toFixed(2)}s / ${state.totalDuration.toFixed(2)}s`;
+    }
+
+    seekSlider.addEventListener('input', (e) => seekTo(parseFloat(e.target.value)));
+
+    let isCanvasDragging = false;
+    function handleCanvasSeek(e) {
+      const rect = canvas.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const ratio = Math.max(0, Math.min(1, clickX / rect.width));
+      const targetSec = (state.playbackTime - 0.5) + (ratio * 4.0);
+      seekTo(targetSec);
+    }
+    canvas.addEventListener('mousedown', (e) => { isCanvasDragging = true; handleCanvasSeek(e); });
+    window.addEventListener('mousemove', (e) => { if (isCanvasDragging) handleCanvasSeek(e); });
+    window.addEventListener('mouseup', () => { isCanvasDragging = false; });
+
+    function startPlayback() {
+      initAudioEngine();
+      if (state.audioCtx && state.audioCtx.state === 'suspended') state.audioCtx.resume();
+      state.isPlaying = true;
+      const tempoScale = state.bpm / 120;
+      state.startTime = performance.now() - (state.playbackTime / tempoScale) * 1000;
+      btnPlay.textContent = '⏸ 一時停止';
+      document.getElementById('hudStatus').textContent = '再生中';
+      animId = requestAnimationFrame(mainLoop);
+    }
+
+    function stopPlayback() {
+      state.isPlaying = false;
+      btnPlay.textContent = '▶ 再生';
+      document.getElementById('hudStatus').textContent = '停止';
+      if (animId) cancelAnimationFrame(animId);
+      videoLeft.pause();
+      videoRight.pause();
+      stopAllSamplerVoices(1);
+      stopAllSamplerVoices(2);
+    }
+
+    btnPlay.addEventListener('click', () => {
+      if (state.isPlaying) stopPlayback(); else startPlayback();
+    });
+
+    function startRecordingAndExport() {
+      initAudioEngine();
+      if (state.audioCtx && state.audioCtx.state === 'suspended') state.audioCtx.resume();
+
+      seekTo(0);
+
+      const videoStream = exportCanvas.captureStream(60);
+      const audioStream = state.exportStreamDest.stream;
+
+      const combinedStream = new MediaStream([
+        ...videoStream.getVideoTracks(),
+        ...audioStream.getAudioTracks()
+      ]);
+
+      let mimeType = 'video/webm; codecs=vp9,opus';
+      if (!MediaRecorder.isTypeSupported(mimeType)) {
+        mimeType = 'video/webm';
+      }
+
+      state.recordedChunks = [];
+      state.mediaRecorder = new MediaRecorder(combinedStream, {
+        mimeType: mimeType,
+        videoBitsPerSecond: 8000000
+      });
+
+      state.mediaRecorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          state.recordedChunks.push(e.data);
+        }
+      };
+
+      state.mediaRecorder.onstop = () => {
+        const blob = new Blob(state.recordedChunks, { type: 'video/webm' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        a.download = `red_zone_mad_${Date.now()}.webm`;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        }, 100);
+      };
+
+      state.mediaRecorder.start(200);
+      state.isRecording = true;
+      hudRec.style.display = 'inline-block';
+      btnRecordExport.classList.add('recording');
+      btnRecordExport.textContent = '⏹ 録画停止＆ダウンロード';
+
+      startPlayback();
+    }
+
+    function stopRecordingAndDownload() {
+      if (!state.isRecording) return;
+      state.isRecording = false;
+      hudRec.style.display = 'none';
+      btnRecordExport.classList.remove('recording');
+      btnRecordExport.textContent = '⏺ 録画を開始して動画を出力';
+
+      if (state.mediaRecorder && state.mediaRecorder.state !== 'inactive') {
+        state.mediaRecorder.stop();
+      }
+    }
+
+    btnRecordExport.addEventListener('click', () => {
+      if (state.isRecording) {
+        stopRecordingAndDownload();
+        stopPlayback();
+      } else {
+        startRecordingAndExport();
+      }
+    });
+
+    function populateBaseKeySelect(el) {
+      if (!el) return;
+      el.innerHTML = '';
+      for (let p = 36; p <= 72; p++) {
+        const opt = document.createElement('option');
+        opt.value = p;
+        opt.textContent = midiToNoteName(p);
+        if (p === 60) opt.selected = true;
+        el.appendChild(opt);
+      }
+    }
+    const bSel1 = document.getElementById('baseNoteSelect1');
+    const bSel2 = document.getElementById('baseNoteSelect2');
+    populateBaseKeySelect(bSel1);
+    populateBaseKeySelect(bSel2);
+
+    if (bSel1) bSel1.addEventListener('change', (e) => state.track1.basePitch = parseInt(e.target.value, 10));
+    if (bSel2) bSel2.addEventListener('change', (e) => state.track2.basePitch = parseInt(e.target.value, 10));
+
+    const oct1 = document.getElementById('m1OctSelect');
+    const oct2 = document.getElementById('m2OctSelect');
+    if (oct1) oct1.addEventListener('change', (e) => state.track1.octaveShift = parseInt(e.target.value, 10));
+    if (oct2) oct2.addEventListener('change', (e) => state.track2.octaveShift = parseInt(e.target.value, 10));
+
+    const s1 = document.getElementById('m1SemiSlider');
+    const f1 = document.getElementById('m1FineSlider');
+    if (s1) s1.addEventListener('input', (e) => {
+      state.track1.semiShift = parseInt(e.target.value, 10);
+      document.getElementById('m1SemiVal').textContent = `${state.track1.semiShift} st`;
+    });
+    if (f1) f1.addEventListener('input', (e) => {
+      state.track1.fineShift = parseInt(e.target.value, 10);
+      document.getElementById('m1FineVal').textContent = `${state.track1.fineShift} cents`;
+    });
+
+    const s2 = document.getElementById('m2SemiSlider');
+    const f2 = document.getElementById('m2FineSlider');
+    if (s2) s2.addEventListener('input', (e) => {
+      state.track2.semiShift = parseInt(e.target.value, 10);
+      document.getElementById('m2SemiVal').textContent = `${state.track2.semiShift} st`;
+    });
+    if (f2) f2.addEventListener('input', (e) => {
+      state.track2.fineShift = parseInt(e.target.value, 10);
+      document.getElementById('m2FineVal').textContent = `${state.track2.fineShift} cents`;
+    });
+
+    const m1MuteBtn = document.getElementById('m1MuteBtn');
+    if (m1MuteBtn) {
+      m1MuteBtn.addEventListener('click', () => {
+        state.track1.isMuted = !state.track1.isMuted;
+        m1MuteBtn.classList.toggle('active', state.track1.isMuted);
+        m1MuteBtn.textContent = state.track1.isMuted ? 'MUTED' : 'MUTE';
+        if (state.track1.isMuted) stopAllSamplerVoices(1);
+      });
+    }
+
+    const m2MuteBtn = document.getElementById('m2MuteBtn');
+    if (m2MuteBtn) {
+      m2MuteBtn.addEventListener('click', () => {
+        state.track2.isMuted = !state.track2.isMuted;
+        m2MuteBtn.classList.toggle('active', state.track2.isMuted);
+        m2MuteBtn.textContent = state.track2.isMuted ? 'MUTED' : 'MUTE';
+        if (state.track2.isMuted) stopAllSamplerVoices(2);
+      });
+    }
+
+    document.getElementById('selectLayout').addEventListener('change', (e) => setLayout(e.target.value));
+
+    document.getElementById('rangeBpm').addEventListener('input', (e) => {
+      state.bpm = parseInt(e.target.value, 10);
+      document.getElementById('bpmVal').textContent = state.bpm;
+      if (state.isPlaying) {
+        state.startTime = performance.now() - (state.playbackTime / (state.bpm / 120)) * 1000;
+      }
+    });
+    document.getElementById('checkGate').addEventListener('change', (e) => state.isGate = e.target.checked);
+
+    document.getElementById('rangeV1Start').addEventListener('input', (e) => {
+      state.v1Start = parseFloat(e.target.value);
+      document.getElementById('v1StartVal').textContent = `${state.v1Start.toFixed(2)}s`;
+      try { videoLeft.currentTime = state.v1Start; } catch (err) {}
+    });
+    document.getElementById('rangeV2Start').addEventListener('input', (e) => {
+      state.v2Start = parseFloat(e.target.value);
+      document.getElementById('v2StartVal').textContent = `${state.v2Start.toFixed(2)}s`;
+      try { videoRight.currentTime = state.v2Start; } catch (err) {}
+    });
+
+    document.getElementById('cropZoom').addEventListener('input', (e) => {
+      state.crop.zoom = parseFloat(e.target.value);
+      document.getElementById('cropZoomVal').textContent = `${state.crop.zoom.toFixed(1)}x`;
+      updateCrop();
+    });
+    document.getElementById('cropX').addEventListener('input', (e) => {
+      state.crop.x = parseInt(e.target.value, 10);
+      document.getElementById('cropXVal').textContent = `${state.crop.x}%`;
+      updateCrop();
+    });
+
+    document.getElementById('rangeDist').addEventListener('input', (e) => {
+      const val = parseInt(e.target.value, 10);
+      document.getElementById('distVal').textContent = `${val}%`;
+      if (state.distortionNode) state.distortionNode.curve = makeDistortionCurve(val * 4);
+    });
+    document.getElementById('rangeEqLow').addEventListener('input', (e) => {
+      if (state.eqLowNode) state.eqLowNode.gain.value = parseFloat(e.target.value);
+    });
+    document.getElementById('rangeEqHigh').addEventListener('input', (e) => {
+      if (state.eqHighNode) state.eqHighNode.gain.value = parseFloat(e.target.value);
+    });
+    document.getElementById('rangeDelay').addEventListener('input', (e) => {
+      const val = parseFloat(e.target.value) / 100;
+      document.getElementById('delayVal').textContent = `${Math.round(val * 100)}%`;
+      if (state.delayGainNode) state.delayGainNode.gain.value = val;
+    });
+    document.getElementById('rangeVol').addEventListener('input', (e) => {
+      const val = parseFloat(e.target.value);
+      document.getElementById('volVal').textContent = `${Math.round(val * 100)}%`;
+      if (state.masterGain) state.masterGain.gain.value = val;
+    });
+
+    function updatePitchBounds() {
+      const notes = [...state.track1.notes, ...state.track2.notes];
+      if (notes.length === 0) return;
+      const pitches = notes.map(n => n.midi);
+      state.pitchMin = Math.max(12, Math.min(...pitches) - 6);
+      state.pitchMax = Math.min(115, Math.max(...pitches) + 6);
+    }
+    function updateDurations() {
+      let maxTime = 10;
+      if (state.track1.notes.length) maxTime = Math.max(maxTime, state.track1.notes[state.track1.notes.length - 1].time + 2);
+      if (state.track2.notes.length) maxTime = Math.max(maxTime, state.track2.notes[state.track2.notes.length - 1].time + 2);
+      state.totalDuration = maxTime;
+      seekSlider.max = maxTime;
+    }
+
+    async function parseMidiFile(file) {
+      const buf = await file.arrayBuffer();
+      const midi = new Midi(buf);
+      const notes = [];
+      midi.tracks.forEach(track => {
+        track.notes.forEach(n => {
+          notes.push({ time: n.time, midi: n.midi, duration: n.duration });
+        });
+      });
+      notes.sort((a, b) => a.time - b.time);
+      notes.forEach((n, idx) => {
+        n.hitIndex = idx + 1;
+        n.shouldFlip = (idx + 1) % 2 === 0;
+      });
+      return notes;
+    }
+
+    document.getElementById('inputMidi1').addEventListener('change', async (e) => {
+      if (e.target.files[0]) {
+        state.track1.notes = await parseMidiFile(e.target.files[0]);
+        document.getElementById('m1Status').textContent = `読込済 (${state.track1.notes.length}音)`;
+        updatePitchBounds(); updateDurations(); drawPianoRoll();
+      }
+    });
+    document.getElementById('inputMidi2').addEventListener('change', async (e) => {
+      if (e.target.files[0]) {
+        state.track2.notes = await parseMidiFile(e.target.files[0]);
+        document.getElementById('m2Status').textContent = `読込済 (${state.track2.notes.length}音)`;
+        updatePitchBounds(); updateDurations(); drawPianoRoll();
+      }
+    });
+
+    async function loadVideoAndAudio(file, trackTarget) {
+      initAudioEngine();
+      const url = URL.createObjectURL(file);
+      const targetVideo = trackTarget === 1 ? videoLeft : videoRight;
+      targetVideo.src = url;
+      targetVideo.muted = true;
+
+      targetVideo.onloadedmetadata = () => {
+        const dur = targetVideo.duration || 10;
+        if (trackTarget === 1) {
+          document.getElementById('rangeV1Start').max = dur.toFixed(2);
+          if (!videoRight.src) document.getElementById('rangeV2Start').max = dur.toFixed(2);
+        } else {
+          document.getElementById('rangeV2Start').max = dur.toFixed(2);
+        }
+      };
+
+      const arrayBuffer = await file.arrayBuffer();
+      state.audioCtx.decodeAudioData(arrayBuffer, (decodedBuffer) => {
+        if (trackTarget === 1) {
+          state.track1.buffer = decodedBuffer;
+          document.getElementById('v1Status').textContent = `音声デコード済`;
+          if (!videoRight.src) {
+            videoRight.src = url;
+            videoRight.muted = true;
+            state.track2.buffer = decodedBuffer;
+          }
+        } else {
+          state.track2.buffer = decodedBuffer;
+        }
+      }, (err) => {
+        console.warn("Audio decode fallback:", err);
+      });
+    }
+
+    document.getElementById('inputVideo1').addEventListener('change', (e) => {
+      if (e.target.files[0]) loadVideoAndAudio(e.target.files[0], 1);
+    });
+    document.getElementById('inputVideo2').addEventListener('change', (e) => {
+      if (e.target.files[0]) loadVideoAndAudio(e.target.files[0], 2);
+    });
+
+    // テストサンプル（重音・和音を含むテストフレーズ）
+    document.getElementById('btnSampleGen').addEventListener('click', async () => {
+      initAudioEngine();
+
+      const sampleRate = state.audioCtx.sampleRate;
+      const length = sampleRate * 1.5;
+      const buffer = state.audioCtx.createBuffer(1, length, sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < length; i++) {
+        const t = i / sampleRate;
+        const saw = 2 * ((t * 261.63) % 1) - 1;
+        const env = Math.exp(-t * 2.0);
+        data[i] = saw * env * 0.35;
+      }
+      state.track1.buffer = buffer;
+      state.track2.buffer = buffer;
+      document.getElementById('v1Status').textContent = 'サンプル音生成済';
+
+      const testCanvas = document.createElement('canvas');
+      testCanvas.width = 640; testCanvas.height = 360;
+      const tCtx = testCanvas.getContext('2d');
+      let angle = 0;
+      setInterval(() => {
+        angle += 0.08;
+        tCtx.fillStyle = '#0f172a';
+        tCtx.fillRect(0, 0, 640, 360);
+        tCtx.fillStyle = '#38bdf8';
+        tCtx.beginPath();
+        tCtx.arc(320 + Math.sin(angle)*120, 180, 50, 0, Math.PI * 2);
+        tCtx.fill();
+        tCtx.fillStyle = '#f43f5e';
+        tCtx.fillRect(320 + Math.sin(angle)*120, 170, 45, 20);
+      }, 1000 / 30);
+
+      const stream = testCanvas.captureStream(30);
+      videoLeft.srcObject = stream;
+      videoRight.srcObject = stream;
+      videoLeft.muted = true;
+      videoRight.muted = true;
+      videoLeft.play();
+      videoRight.play();
+
+      // 和音（コード）を含むトラック生成
+      function makeTrack(baseMidi = 60, offset = 0) {
+        const notes = [];
+        let t = offset;
+        for (let i = 0; i < 32; i++) {
+          // 単音打鍵
+          notes.push({
+            time: t,
+            midi: baseMidi + (i % 2 === 0 ? 0 : 12),
+            duration: 0.2,
+            hitIndex: notes.length + 1,
+            shouldFlip: (notes.length + 1) % 2 === 0
+          });
+          // 4拍ごとに3和音（コード）を同時発音
+          if (i % 4 === 0) {
+            notes.push({
+              time: t,
+              midi: baseMidi + 7, // 5度
+              duration: 0.35,
+              hitIndex: notes.length + 1,
+              shouldFlip: (notes.length + 1) % 2 === 0
+            });
+            notes.push({
+              time: t,
+              midi: baseMidi + 16, // 10度 (長3度オクターブ上)
+              duration: 0.35,
+              hitIndex: notes.length + 1,
+              shouldFlip: (notes.length + 1) % 2 === 0
+            });
+          }
+          t += 0.16;
+        }
+        return notes;
+      }
+
+      state.track1.notes = makeTrack(48, 0.2);
+      state.track2.notes = makeTrack(60, 0.28);
+      document.getElementById('m1Status').textContent = `サンプルMIDI (${state.track1.notes.length}音/重音含)`;
+      document.getElementById('m2Status').textContent = `サンプルMIDI (${state.track2.notes.length}音/重音含)`;
+
+      updatePitchBounds();
+      updateDurations();
+      drawPianoRoll();
+      updateCrop();
+      alert("重音（和音）を含むテストMIDIデータを生成しました。「▶ 再生」を押して同時再生の響きをご確認ください！");
+    });
+
+    drawPianoRoll();
+    updateCrop();
+  </script>
+</body>
+</html>
